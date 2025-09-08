@@ -1,21 +1,24 @@
 import express from 'express';
 import cors from 'cors';
-import { CohereClientV2 } from 'cohere-ai';
+import { CohereClientV2 } from 'cohere-ai'; // Import Cohere SDK
 import dotenv from 'dotenv';
 
+// Load environment variables from .env file
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors({
-  origin: ["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000", "http://127.0.0.1:5173"],
+  origin: ["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000", "http://127.0.0.1:5173","http://127.0.0.1:3001"],
   credentials: true
 }));
 app.use(express.json());
 
+// Initialize Cohere Client
 const cohere = new CohereClientV2({ token: process.env.COHERE_API_KEY });
 
+// Define system prompt for the AI (use the Iron Lady methodology)
 const systemPrompt = `You are an AI assistant specialized in Iron Lady Bangalore's leadership methodology. Iron Lady is a women's leadership development organization that delivers high-impact programs using principles including:
 
 CORE PRINCIPLES:
@@ -34,6 +37,7 @@ LEADERSHIP FOCUS AREAS:
 
 Always respond with authority on women's leadership development, entrepreneurship, and Iron Lady's proven methodologies. Keep responses conversational, inspiring, and actionable. Format with markdown for better readability.`;
 
+// Fallback response logic
 const getFallbackResponse = (message) => {
   const lowerMessage = message.toLowerCase();
   
@@ -56,6 +60,7 @@ const getFallbackResponse = (message) => {
   return `**Welcome to Iron Lady Leadership!**\n\nWe're dedicated to **Enabling a Million Women to reach the TOP** through our transformational programs.\n\n**Our Core Approach:**\n- **Crucibles of Leadership** - Challenges that forge strong leaders\n- **Powerful Requests** - Strategic influence without authority\n- **Art of War Methodology** - Strategic thinking for modern business\n- **Executive Mentorship** - Guidance from proven leaders\n\n**Ready to Transform Your Leadership?**\nAsk me about our programs, methodology, or how we can help you break through to the next level!\n\n*What specific leadership challenge are you facing?*`;
 };
 
+// API route to handle chat messages
 app.post('/api/chat', async (req, res) => {
   try {
     const { message } = req.body;
@@ -64,19 +69,24 @@ app.post('/api/chat', async (req, res) => {
       return res.status(400).json({ error: 'Message cannot be empty' });
     }
     
+    console.log('📨 Received message:', message);
+    
     let responseText;
 
     try {
+      // Use the Cohere SDK to get a response
       const response = await cohere.chat({
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: message }
         ],
         temperature: 0.7,
-        model: "command-a-03-2025",
+        model: "command-a-03-2025",  // You can change the model as needed
       });
       responseText = response.message.content[0].text;
+      console.log('🤖 AI Response generated');
     } catch (aiError) {
+      console.error('❌ AI Generation Error:', aiError.message);
       responseText = getFallbackResponse(message);
     }
     
@@ -86,6 +96,7 @@ app.post('/api/chat', async (req, res) => {
     });
     
   } catch (error) {
+    console.error('❌ API Error:', error);
     res.status(500).json({
       error: 'Unable to process message',
       timestamp: new Date().toISOString()
@@ -93,6 +104,7 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
+// Health check route
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'healthy',
@@ -101,6 +113,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Default route
 app.get('/', (req, res) => {
   res.json({
     name: 'Iron Lady Chatbot API',
@@ -109,6 +122,7 @@ app.get('/', (req, res) => {
   });
 });
 
+// Start the server
 app.listen(PORT, () => {
   console.log(`🚀 Iron Lady Chatbot Server running on port ${PORT}`);
   console.log(`🔗 REST API ready at http://localhost:${PORT}/api/chat`);
