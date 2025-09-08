@@ -13,19 +13,16 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
 }).then(() => console.log("MongoDB connected successfully"))
   .catch(err => console.log("MongoDB connection error:", err));
 
-// Initialize Cohere AI
 const cohere = new CohereClientV2({ 
   token: process.env.COHERE_API_KEY 
 });
 
-// Enhanced Todo Schema
 const TodoSchema = new mongoose.Schema({
   title: { type: String, required: true },
   description: { type: String },
@@ -39,15 +36,15 @@ const TodoSchema = new mongoose.Schema({
   dueDate: { type: Date },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
-  estimatedTime: { type: Number }, // in minutes
-  actualTime: { type: Number }, // in minutes
+  estimatedTime: { type: Number },
+  actualTime: { type: Number },
   tags: [{ type: String }],
   aiGenerated: { type: Boolean, default: false },
   subtasks: [{
     title: String,
     completed: { type: Boolean, default: false }
   }],
-  sessionId: { type: String } // for session-based todos in demo
+  sessionId: { type: String }
 });
 
 TodoSchema.pre('save', function(next) {
@@ -57,10 +54,8 @@ TodoSchema.pre('save', function(next) {
 
 const Todo = mongoose.model('Todo', TodoSchema);
 
-// Session storage for demo purposes (replace with proper session management in production)
 const sessionTodos = new Map();
 
-// AI Helper Functions
 const generateTodoSuggestions = async (existingTodos) => {
   try {
     const todosContext = existingTodos.map(todo => 
@@ -144,7 +139,6 @@ const optimizeTodoOrder = async (todos) => {
   }
 };
 
-// Utility Functions
 const getTodosBySession = (sessionId) => {
   if (!sessionTodos.has(sessionId)) {
     sessionTodos.set(sessionId, []);
@@ -158,19 +152,15 @@ const saveTodoToSession = (sessionId, todo) => {
   sessionTodos.set(sessionId, todos);
 };
 
-
 app.post('/api/todos', async (req, res) => {
   try {
     const sessionId = req.headers['x-session-id'];
     
-    // Always try database first, fallback to session
     if (!sessionId || mongoose.connection.readyState !== 1) {
-      // Use database when no session header or when DB is connected
       const todo = new Todo(req.body);
       const savedTodo = await todo.save();
       res.status(201).json(savedTodo);
     } else {
-      // Fallback to session storage
       const todoData = {
         ...req.body,
         _id: Date.now().toString(),
@@ -186,13 +176,11 @@ app.post('/api/todos', async (req, res) => {
   }
 });
 
-// READ all todos
 app.get('/api/todos', async (req, res) => {
   try {
     const sessionId = req.headers['x-session-id'];
     
     if (sessionId) {
-      // Demo mode
       const todos = getTodosBySession(sessionId);
       res.json(todos.sort((a, b) => {
         if (a.completed !== b.completed) return a.completed ? 1 : -1;
@@ -200,7 +188,6 @@ app.get('/api/todos', async (req, res) => {
         return priorityOrder[b.priority] - priorityOrder[a.priority];
       }));
     } else {
-      // Production mode
       const todos = await Todo.find()
         .sort({ completed: 1, priority: -1, dueDate: 1 });
       res.json(todos);
@@ -215,7 +202,6 @@ app.put('/api/todos/:id', async (req, res) => {
     const sessionId = req.headers['x-session-id'];
     
     if (sessionId) {
-      // Demo mode
       const todos = getTodosBySession(sessionId);
       const todoIndex = todos.findIndex(t => t._id === req.params.id);
       if (todoIndex === -1) {
@@ -241,13 +227,11 @@ app.put('/api/todos/:id', async (req, res) => {
   }
 });
 
-// DELETE a todo
 app.delete('/api/todos/:id', async (req, res) => {
   try {
     const sessionId = req.headers['x-session-id'];
     
     if (sessionId) {
-      // Demo mode
       const todos = getTodosBySession(sessionId);
       const filteredTodos = todos.filter(t => t._id !== req.params.id);
       if (todos.length === filteredTodos.length) {
@@ -256,7 +240,6 @@ app.delete('/api/todos/:id', async (req, res) => {
       sessionTodos.set(sessionId, filteredTodos);
       res.json({ message: 'Todo deleted successfully' });
     } else {
-      // Production mode
       const deletedTodo = await Todo.findByIdAndDelete(req.params.id);
       if (!deletedTodo) {
         return res.status(404).json({ message: "Todo not found" });
@@ -268,14 +251,12 @@ app.delete('/api/todos/:id', async (req, res) => {
   }
 });
 
-// BULK operations
 app.patch('/api/todos/bulk', async (req, res) => {
   try {
     const { action, ids } = req.body;
     const sessionId = req.headers['x-session-id'];
     
     if (sessionId) {
-      // Demo mode
       const todos = getTodosBySession(sessionId);
       ids.forEach(id => {
         const todo = todos.find(t => t._id === id);
@@ -294,7 +275,6 @@ app.patch('/api/todos/bulk', async (req, res) => {
       sessionTodos.set(sessionId, todos);
       res.json({ message: `Bulk ${action} completed` });
     } else {
-      // Production mode
       let result;
       switch (action) {
         case 'complete':
@@ -316,7 +296,6 @@ app.patch('/api/todos/bulk', async (req, res) => {
   }
 });
 
-// AI-powered suggestions
 app.get('/api/ai-suggestions', async (req, res) => {
   try {
     const sessionId = req.headers['x-session-id'];
@@ -335,7 +314,6 @@ app.get('/api/ai-suggestions', async (req, res) => {
   }
 });
 
-// AI-powered todo optimization
 app.post('/api/ai-optimize', async (req, res) => {
   try {
     const sessionId = req.headers['x-session-id'];
@@ -354,7 +332,6 @@ app.post('/api/ai-optimize', async (req, res) => {
   }
 });
 
-// Analytics endpoint
 app.get('/api/analytics', async (req, res) => {
   try {
     const sessionId = req.headers['x-session-id'];
@@ -375,7 +352,6 @@ app.get('/api/analytics', async (req, res) => {
     
     const completionRate = total > 0 ? Math.round((completed / total) * 100) : 0;
     
-    // Category breakdown
     const categoryStats = todos.reduce((acc, todo) => {
       const category = todo.category || 'Uncategorized';
       if (!acc[category]) acc[category] = { total: 0, completed: 0 };
@@ -384,7 +360,6 @@ app.get('/api/analytics', async (req, res) => {
       return acc;
     }, {});
     
-    // Priority breakdown
     const priorityStats = {
       high: todos.filter(t => t.priority === 'high').length,
       medium: todos.filter(t => t.priority === 'medium').length,
