@@ -29,7 +29,7 @@ const TodoApp = () => {
     estimatedTime: ''
   });
 
-  const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+const [sessionId] = useState(() => `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
   
   useEffect(() => {
     fetchTodos();
@@ -43,11 +43,12 @@ const TodoApp = () => {
   const fetchTodos = async () => {
     try {
       const response = await fetch(`${API_URL}/todos`, {
-        headers: { 'X-Session-ID': sessionId }
       });
       const data = await response.json();
       setTodos(data);
     } catch (error) {
+      console.log(error);
+
       setTodos([
         {
           _id: '1',
@@ -122,6 +123,7 @@ const TodoApp = () => {
       setSuggestions(data);
       setShowSuggestions(true);
     } catch (error) {
+      console.log(error);
       setSuggestions([
         {
           title: 'Schedule weekly team standup',
@@ -157,6 +159,7 @@ const TodoApp = () => {
       const data = await response.json();
       setAnalytics(data);
     } catch (error) {
+      console.log(error);
       setAnalytics({
         total: 5,
         completed: 1,
@@ -214,7 +217,6 @@ const TodoApp = () => {
         method,
         headers: {
           'Content-Type': 'application/json',
-          'X-Session-ID': sessionId
         },
         body: JSON.stringify({
           ...formData,
@@ -226,6 +228,8 @@ const TodoApp = () => {
       fetchTodos();
       fetchAnalytics();
     } catch (error) {
+      console.log(error);
+
       const newTodo = {
         _id: Date.now().toString(),
         ...formData,
@@ -254,6 +258,7 @@ const TodoApp = () => {
       fetchTodos();
       fetchAnalytics();
     } catch (error) {
+      console.log(error);
       setTodos(todos.filter(todo => todo._id !== id));
     }
     setSelectedTodos(prev => {
@@ -276,6 +281,8 @@ const TodoApp = () => {
       fetchTodos();
       fetchAnalytics();
     } catch (error) {
+      console.log(error);
+
       setTodos(todos.map(todo => 
         todo._id === id ? { ...todo, completed: !completed } : todo
       ));
@@ -309,6 +316,7 @@ const TodoApp = () => {
       fetchAnalytics();
       setSuggestions(suggestions.filter(s => s.title !== suggestion.title));
     } catch (error) {
+      console.log(error);
       const newTodo = {
         _id: Date.now().toString(),
         ...suggestion,
@@ -335,6 +343,7 @@ const TodoApp = () => {
       fetchTodos();
       fetchAnalytics();
     } catch (error) {
+      console.log(error);
       setTodos(todos.filter(todo => !selectedIds.includes(todo._id)));
     }
     setSelectedTodos(new Set());
@@ -354,6 +363,8 @@ const TodoApp = () => {
       fetchTodos();
       fetchAnalytics();
     } catch (error) {
+      console.log(error);
+
       setTodos(todos.map(todo => 
         selectedIds.includes(todo._id) ? { ...todo, completed: true } : todo
       ));

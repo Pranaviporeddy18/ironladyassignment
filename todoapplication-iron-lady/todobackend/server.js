@@ -7,7 +7,6 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
 app.use(cors({
   origin: ["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000", "http://127.0.0.1:5173"],
   credentials: true
@@ -164,7 +163,14 @@ app.post('/api/todos', async (req, res) => {
   try {
     const sessionId = req.headers['x-session-id'];
     
-    if (sessionId) {
+    // Always try database first, fallback to session
+    if (!sessionId || mongoose.connection.readyState !== 1) {
+      // Use database when no session header or when DB is connected
+      const todo = new Todo(req.body);
+      const savedTodo = await todo.save();
+      res.status(201).json(savedTodo);
+    } else {
+      // Fallback to session storage
       const todoData = {
         ...req.body,
         _id: Date.now().toString(),
@@ -174,10 +180,6 @@ app.post('/api/todos', async (req, res) => {
       };
       saveTodoToSession(sessionId, todoData);
       res.status(201).json(todoData);
-    } else {
-      const todo = new Todo(req.body);
-      const savedTodo = await todo.save();
-      res.status(201).json(savedTodo);
     }
   } catch (error) {
     res.status(400).json({ message: "Error creating todo", error: error.message });
