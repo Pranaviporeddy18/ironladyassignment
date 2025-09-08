@@ -2,13 +2,14 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const { CohereClientV2 } = require('cohere-ai');
+const crypto = require('crypto');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors({
-  origin: ["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000", "http://127.0.0.1:5173"],
+  origin: ["http://localhost:3000", "http://localhost:5174", "http://127.0.0.1:3000", "http://127.0.0.1:5174"],
   credentials: true
 }));
 app.use(express.json());
@@ -44,7 +45,7 @@ const TodoSchema = new mongoose.Schema({
     title: String,
     completed: { type: Boolean, default: false }
   }],
-  sessionId: { type: String }
+  userToken: { type: String, required: true, index: true }
 });
 
 TodoSchema.pre('save', function(next) {
@@ -54,7 +55,13 @@ TodoSchema.pre('save', function(next) {
 
 const Todo = mongoose.model('Todo', TodoSchema);
 
-const sessionTodos = new Map();
+const generateUserToken = () => {
+  return crypto.randomBytes(16).toString('hex');
+};
+
+const getUserToken = (req) => {
+  return req.headers['user-token'] || req.headers['x-user-token'];
+};
 
 const generateTodoSuggestions = async (existingTodos) => {
   try {
@@ -139,38 +146,25 @@ const optimizeTodoOrder = async (todos) => {
   }
 };
 
-const getTodosBySession = (sessionId) => {
-  if (!sessionTodos.has(sessionId)) {
-    sessionTodos.set(sessionId, []);
-  }
-  return sessionTodos.get(sessionId);
-};
-
-const saveTodoToSession = (sessionId, todo) => {
-  const todos = getTodosBySession(sessionId);
-  todos.push(todo);
-  sessionTodos.set(sessionId, todos);
-};
+app.post('/api/generate-token', (req, res) => {
+  const token = generateUserToken();
+  res.json({ token });
+});
 
 app.post('/api/todos', async (req, res) => {
   try {
-    const sessionId = req.headers['x-session-id'];
-    
-    if (!sessionId || mongoose.connection.readyState !== 1) {
-      const todo = new Todo(req.body);
-      const savedTodo = await todo.save();
-      res.status(201).json(savedTodo);
-    } else {
-      const todoData = {
-        ...req.body,
-        _id: Date.now().toString(),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        sessionId
-      };
-      saveTodoToSession(sessionId, todoData);
-      res.status(201).json(todoData);
+    const userToken = getUserToken(req);
+    if (!userToken) {
+      return res.status(400).json({ message: "User token is required" });
     }
+
+    const todo = new Todo({
+      ...req.body,
+      userToken
+    });
+    
+    const savedTodo = await todo.save();
+    res.status(201).json(savedTodo);
   } catch (error) {
     res.status(400).json({ message: "Error creating todo", error: error.message });
   }
@@ -178,20 +172,15 @@ app.post('/api/todos', async (req, res) => {
 
 app.get('/api/todos', async (req, res) => {
   try {
-    const sessionId = req.headers['x-session-id'];
-    
-    if (sessionId) {
-      const todos = getTodosBySession(sessionId);
-      res.json(todos.sort((a, b) => {
-        if (a.completed !== b.completed) return a.completed ? 1 : -1;
-        const priorityOrder = { high: 3, medium: 2, low: 1 };
-        return priorityOrder[b.priority] - priorityOrder[a.priority];
-      }));
-    } else {
-      const todos = await Todo.find()
-        .sort({ completed: 1, priority: -1, dueDate: 1 });
-      res.json(todos);
+    const userToken = getUserToken(req);
+    if (!userToken) {
+      return res.status(400).json({ message: "User token is required" });
     }
+
+    const todos = await Todo.find({ userToken })
+      .sort({ completed: 1, priority: -1, dueDate: 1 });
+    
+    res.json(todos);
   } catch (error) {
     res.status(500).json({ message: "Failed to fetch todos", error: error.message });
   }
@@ -199,29 +188,22 @@ app.get('/api/todos', async (req, res) => {
 
 app.put('/api/todos/:id', async (req, res) => {
   try {
-    const sessionId = req.headers['x-session-id'];
-    
-    if (sessionId) {
-      const todos = getTodosBySession(sessionId);
-      const todoIndex = todos.findIndex(t => t._id === req.params.id);
-      if (todoIndex === -1) {
-        return res.status(404).json({ message: "Todo not found" });
-      }
-      
-      todos[todoIndex] = { ...todos[todoIndex], ...req.body, updatedAt: new Date() };
-      sessionTodos.set(sessionId, todos);
-      res.json(todos[todoIndex]);
-    } else {
-      const updatedTodo = await Todo.findByIdAndUpdate(
-        req.params.id, 
-        req.body, 
-        { new: true }
-      );
-      if (!updatedTodo) {
-        return res.status(404).json({ message: "Todo not found" });
-      }
-      res.json(updatedTodo);
+    const userToken = getUserToken(req);
+    if (!userToken) {
+      return res.status(400).json({ message: "User token is required" });
     }
+
+    const updatedTodo = await Todo.findOneAndUpdate(
+      { _id: req.params.id, userToken },
+      req.body,
+      { new: true }
+    );
+    
+    if (!updatedTodo) {
+      return res.status(404).json({ message: "Todo not found" });
+    }
+    
+    res.json(updatedTodo);
   } catch (error) {
     res.status(400).json({ message: "Error updating todo", error: error.message });
   }
@@ -229,23 +211,21 @@ app.put('/api/todos/:id', async (req, res) => {
 
 app.delete('/api/todos/:id', async (req, res) => {
   try {
-    const sessionId = req.headers['x-session-id'];
-    
-    if (sessionId) {
-      const todos = getTodosBySession(sessionId);
-      const filteredTodos = todos.filter(t => t._id !== req.params.id);
-      if (todos.length === filteredTodos.length) {
-        return res.status(404).json({ message: "Todo not found" });
-      }
-      sessionTodos.set(sessionId, filteredTodos);
-      res.json({ message: 'Todo deleted successfully' });
-    } else {
-      const deletedTodo = await Todo.findByIdAndDelete(req.params.id);
-      if (!deletedTodo) {
-        return res.status(404).json({ message: "Todo not found" });
-      }
-      res.json({ message: 'Todo deleted successfully' });
+    const userToken = getUserToken(req);
+    if (!userToken) {
+      return res.status(400).json({ message: "User token is required" });
     }
+
+    const deletedTodo = await Todo.findOneAndDelete({ 
+      _id: req.params.id, 
+      userToken 
+    });
+    
+    if (!deletedTodo) {
+      return res.status(404).json({ message: "Todo not found" });
+    }
+    
+    res.json({ message: 'Todo deleted successfully' });
   } catch (error) {
     res.status(500).json({ message: "Error deleting todo", error: error.message });
   }
@@ -254,43 +234,31 @@ app.delete('/api/todos/:id', async (req, res) => {
 app.patch('/api/todos/bulk', async (req, res) => {
   try {
     const { action, ids } = req.body;
-    const sessionId = req.headers['x-session-id'];
+    const userToken = getUserToken(req);
     
-    if (sessionId) {
-      const todos = getTodosBySession(sessionId);
-      ids.forEach(id => {
-        const todo = todos.find(t => t._id === id);
-        if (todo) {
-          switch (action) {
-            case 'complete':
-              todo.completed = true;
-              break;
-            case 'delete':
-              const index = todos.indexOf(todo);
-              todos.splice(index, 1);
-              break;
-          }
-        }
-      });
-      sessionTodos.set(sessionId, todos);
-      res.json({ message: `Bulk ${action} completed` });
-    } else {
-      let result;
-      switch (action) {
-        case 'complete':
-          result = await Todo.updateMany(
-            { _id: { $in: ids } },
-            { completed: true }
-          );
-          break;
-        case 'delete':
-          result = await Todo.deleteMany({ _id: { $in: ids } });
-          break;
-        default:
-          return res.status(400).json({ message: "Invalid bulk action" });
-      }
-      res.json({ message: `Bulk ${action} completed`, result });
+    if (!userToken) {
+      return res.status(400).json({ message: "User token is required" });
     }
+
+    let result;
+    switch (action) {
+      case 'complete':
+        result = await Todo.updateMany(
+          { _id: { $in: ids }, userToken },
+          { completed: true }
+        );
+        break;
+      case 'delete':
+        result = await Todo.deleteMany({ 
+          _id: { $in: ids }, 
+          userToken 
+        });
+        break;
+      default:
+        return res.status(400).json({ message: "Invalid bulk action" });
+    }
+    
+    res.json({ message: `Bulk ${action} completed`, result });
   } catch (error) {
     res.status(500).json({ message: `Bulk ${req.body.action} failed`, error: error.message });
   }
@@ -298,14 +266,15 @@ app.patch('/api/todos/bulk', async (req, res) => {
 
 app.get('/api/ai-suggestions', async (req, res) => {
   try {
-    const sessionId = req.headers['x-session-id'];
-    let existingTodos;
-    
-    if (sessionId) {
-      existingTodos = getTodosBySession(sessionId);
-    } else {
-      existingTodos = await Todo.find({ completed: false }).limit(10);
+    const userToken = getUserToken(req);
+    if (!userToken) {
+      return res.status(400).json({ message: "User token is required" });
     }
+
+    const existingTodos = await Todo.find({ 
+      userToken, 
+      completed: false 
+    }).limit(10);
     
     const suggestions = await generateTodoSuggestions(existingTodos);
     res.json(suggestions);
@@ -316,14 +285,15 @@ app.get('/api/ai-suggestions', async (req, res) => {
 
 app.post('/api/ai-optimize', async (req, res) => {
   try {
-    const sessionId = req.headers['x-session-id'];
-    let todos;
-    
-    if (sessionId) {
-      todos = getTodosBySession(sessionId).filter(t => !t.completed);
-    } else {
-      todos = await Todo.find({ completed: false });
+    const userToken = getUserToken(req);
+    if (!userToken) {
+      return res.status(400).json({ message: "User token is required" });
     }
+
+    const todos = await Todo.find({ 
+      userToken, 
+      completed: false 
+    });
     
     const optimizedOrder = await optimizeTodoOrder(todos);
     res.json(optimizedOrder);
@@ -334,14 +304,12 @@ app.post('/api/ai-optimize', async (req, res) => {
 
 app.get('/api/analytics', async (req, res) => {
   try {
-    const sessionId = req.headers['x-session-id'];
-    let todos;
-    
-    if (sessionId) {
-      todos = getTodosBySession(sessionId);
-    } else {
-      todos = await Todo.find();
+    const userToken = getUserToken(req);
+    if (!userToken) {
+      return res.status(400).json({ message: "User token is required" });
     }
+
+    const todos = await Todo.find({ userToken });
     
     const total = todos.length;
     const completed = todos.filter(t => t.completed).length;
@@ -387,49 +355,46 @@ app.get('/api/analytics', async (req, res) => {
 app.get('/api/todos/search', async (req, res) => {
   try {
     const { q, category, priority, completed, dueDate } = req.query;
-    const sessionId = req.headers['x-session-id'];
-    let todos;
+    const userToken = getUserToken(req);
     
-    if (sessionId) {
-      todos = getTodosBySession(sessionId);
-    } else {
-      todos = await Todo.find();
+    if (!userToken) {
+      return res.status(400).json({ message: "User token is required" });
     }
-    
-    let filteredTodos = todos;
+
+    let query = { userToken };
     
     if (q) {
-      const searchQuery = q.toLowerCase();
-      filteredTodos = filteredTodos.filter(todo =>
-        todo.title.toLowerCase().includes(searchQuery) ||
-        (todo.description && todo.description.toLowerCase().includes(searchQuery))
-      );
+      query.$or = [
+        { title: { $regex: q, $options: 'i' } },
+        { description: { $regex: q, $options: 'i' } }
+      ];
     }
     
     if (category) {
-      filteredTodos = filteredTodos.filter(todo => todo.category === category);
+      query.category = category;
     }
     
     if (priority) {
-      filteredTodos = filteredTodos.filter(todo => todo.priority === priority);
+      query.priority = priority;
     }
     
     if (completed !== undefined) {
-      filteredTodos = filteredTodos.filter(todo => 
-        todo.completed === (completed === 'true')
-      );
+      query.completed = completed === 'true';
     }
     
     if (dueDate) {
       const targetDate = new Date(dueDate);
-      filteredTodos = filteredTodos.filter(todo => {
-        if (!todo.dueDate) return false;
-        const todoDate = new Date(todo.dueDate);
-        return todoDate.toDateString() === targetDate.toDateString();
-      });
+      const nextDay = new Date(targetDate);
+      nextDay.setDate(nextDay.getDate() + 1);
+      
+      query.dueDate = {
+        $gte: targetDate,
+        $lt: nextDay
+      };
     }
     
-    res.json(filteredTodos);
+    const todos = await Todo.find(query);
+    res.json(todos);
   } catch (error) {
     res.status(500).json({ message: "Error searching todos", error: error.message });
   }
@@ -437,14 +402,12 @@ app.get('/api/todos/search', async (req, res) => {
 
 app.get('/api/todos/export', async (req, res) => {
   try {
-    const sessionId = req.headers['x-session-id'];
-    let todos;
-    
-    if (sessionId) {
-      todos = getTodosBySession(sessionId);
-    } else {
-      todos = await Todo.find();
+    const userToken = getUserToken(req);
+    if (!userToken) {
+      return res.status(400).json({ message: "User token is required" });
     }
+
+    const todos = await Todo.find({ userToken });
     
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', 'attachment; filename="todos-export.json"');
